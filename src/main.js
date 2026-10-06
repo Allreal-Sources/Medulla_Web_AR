@@ -46,7 +46,7 @@ const TEXT_RISE = 0.02;           // text slides up this far while fading in
 //   delay     = ms after target found before it starts appearing
 // ------------------------------------------------------------
 const DECOR = [
-  { id: "logo",      url: "/assets/03.png", left: 45,   top: 10,   scale: 0.52, delay: 0   },
+  { id: "logo",      url: "/assets/03.png", left: 45,   top: 10,   scale: 0.52, delay: 0, face: true },
   { id: "mountains", url: "/assets/11.png", left: 170,  top: 369,  scale: 1,    delay: 300 },
   { id: "waves",     url: "/assets/12.png", left: -104, top: 1307, scale: 1,    delay: 500 }
 ];
@@ -55,6 +55,12 @@ const FRAME_W = 1080;        // width of the sample brochure frame (px)
 const MAP_TOP = 369;         // y (px) in the frame where india-map.png starts
 const DECOR_SPAWN_DURATION = 700;   // ms for each decor layer to fade in
 const DECOR_RISE = 0.03;            // decor slides up this far while fading in
+
+// Keep text upright on screen. When the phone is tilted (or the camera is wide-angle),
+// anything far from the brochure's centre leans over. These layers keep their spot on
+// the page but turn to face the camera, so their lines stay horizontal.
+const FACE_CAMERA_PAGE_TEXT = true;   // logo, headline, tagline, footnote
+const FACE_CAMERA_CALLOUTS = true;    // the panels that open when an icon is tapped
 
 
 // ============================================================
@@ -102,7 +108,178 @@ const STAGE_SCALE = 1;
 const stage = new THREE.Group();
 stage.position.set(STAGE_OFFSET_X, STAGE_OFFSET_Y, 0);
 stage.scale.set(STAGE_SCALE, STAGE_SCALE, 1);
-anchor.group.add(stage);
+
+// ---- Adaptive pose smoothing -------------------------------------------
+// MindAR writes the raw (noisy) pose into anchor.group. Instead of parenting
+// the content to it directly, content hangs off `smoothRoot`, which chases
+// the raw pose every frame:
+//   - holding still / tiny shake  -> heavy smoothing (jitter disappears)
+//   - real, fast movement         -> light smoothing (follows with little lag)
+// Tune these three if needed.
+const SMOOTH_MIN_ALPHA = 0.06;   // lower = steadier when still (0.03 - 0.15)
+const SMOOTH_POS_GAIN  = 12;     // how fast alpha rises with movement (units/frame)
+const SMOOTH_ROT_GAIN  = 4;      // same, for rotation (radians/frame)
+
+const smoothRoot = new THREE.Group();
+smoothRoot.visible = false;
+scene.add(smoothRoot);
+smoothRoot.add(stage);
+
+const _rawPos = new THREE.Vector3();
+const _rawQuat = new THREE.Quaternion();
+const _rawScale = new THREE.Vector3();
+let smoothHasPose = false;
+
+// ---- SCAN ONCE, THEN LOCK IN SPACE --------------------------------------
+// After the brochure is found, the content is given LOCK_DELAY ms to settle,
+// then LOCKED: tracking is ignored and the map / icons / text stay at that
+// exact spot in the room, even if the phone moves or the brochure leaves the
+// view. The phone's gyroscope counter-rotates the content so it stays put
+// when the phone turns or tilts. (Phone sliding sideways is not tracked --
+// that needs full SLAM, which WebAR on iPhone does not offer.)
+// The Re-scan button unlocks it and waits for the brochure again.
+const LOCK_DELAY = 1200;            // ms after first detection before locking
+const RESCAN_BUTTON_POS = "right";  // "right" or "center" (bottom of screen)
+
+let locked = false;
+let lockTimer = null;
+
+const lockPos = new THREE.Vector3();
+const lockQuat = new THREE.Quaternion();
+const lockQ0 = new THREE.Quaternion();     // phone orientation at lock time
+let lockHasBase = false;                   // true once we have a gyro baseline
+
+// -- phone orientation (same maths as three.js DeviceOrientationControls) --
+const motionQ = new THREE.Quaternion();    // camera orientation in the room
+const _mEuler = new THREE.Euler();
+const _mQ1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const _mQs = new THREE.Quaternion();
+const _mZ = new THREE.Vector3(0, 0, 1);
+let motionHasData = false;
+
+window.addEventListener("deviceorientation", (e) => {
+  if (e.alpha == null || e.beta == null || e.gamma == null) return;
+  const rad = THREE.MathUtils.degToRad;
+  const screenAngle =
+    (screen.orientation && typeof screen.orientation.angle === "number")
+      ? screen.orientation.angle
+      : (window.orientation || 0);
+  _mEuler.set(rad(e.beta), rad(e.alpha), -rad(e.gamma), "YXZ");
+  motionQ.setFromEuler(_mEuler);
+  motionQ.multiply(_mQ1);                                    // camera looks out the back
+  motionQ.multiply(_mQs.setFromAxisAngle(_mZ, -rad(screenAngle)));
+  motionHasData = true;
+});
+
+// iPhone only gives motion data after a permission prompt that must come
+// from a tap. The first tap anywhere asks for it; Android needs nothing.
+let motionAsked = false;
+function askMotionPermission() {
+  if (motionAsked) return;
+  motionAsked = true;
+  const DOE = window.DeviceOrientationEvent;
+  if (DOE && typeof DOE.requestPermission === "function") {
+    DOE.requestPermission().catch((err) => console.warn("Motion permission:", err));
+  }
+}
+document.addEventListener("touchend", askMotionPermission, { passive: true });
+document.addEventListener("click", askMotionPermission, { passive: true });
+
+// Gyro tuning (this is what makes the locked content sway left/right):
+//   GYRO_COMPENSATION = false -> content is simply pinned to the screen at
+//                                its first position and never moves at all.
+//   GYRO_DEADZONE_DEG  -> turns smaller than this are ignored (stops idle sway)
+//   GYRO_MIN_ALPHA     -> smoothing of the gyro signal (lower = steadier,
+//                         but slower to follow a real turn)
+const GYRO_COMPENSATION = false;   // true = content sways with the phone, false = pinned to screen
+const GYRO_DEADZONE_DEG = 0.35;
+const GYRO_MIN_ALPHA = 0.12;
+const GYRO_FOLLOW_GAIN = 6;        // bigger real turns follow faster
+
+const motionS = new THREE.Quaternion();    // smoothed phone orientation
+let motionSReady = false;
+
+function updateMotionSmooth() {
+  if (!motionSReady) {
+    motionS.copy(motionQ);
+    motionSReady = true;
+    return;
+  }
+  const ang = motionS.angleTo(motionQ);
+  if (ang < THREE.MathUtils.degToRad(GYRO_DEADZONE_DEG)) return;   // sensor noise
+  const a = THREE.MathUtils.clamp(ang * GYRO_FOLLOW_GAIN, GYRO_MIN_ALPHA, 1);
+  motionS.slerp(motionQ, a);
+}
+
+const _qrel = new THREE.Quaternion();
+
+function updateWorldLock() {
+  if (!GYRO_COMPENSATION || !motionHasData) return;   // pinned to the screen
+
+  updateMotionSmooth();
+
+  if (!lockHasBase) {                        // first gyro reading since locking
+    lockPos.copy(smoothRoot.position);
+    lockQuat.copy(smoothRoot.quaternion);
+    lockQ0.copy(motionS);
+    lockHasBase = true;
+    return;
+  }
+
+  // Where a point fixed in the room appears now, relative to the phone.
+  _qrel.copy(motionS).invert().multiply(lockQ0);
+  smoothRoot.position.copy(lockPos).applyQuaternion(_qrel);
+  smoothRoot.quaternion.copy(_qrel).multiply(lockQuat);
+}
+
+function lockContent() {
+  lockTimer = null;
+  if (!smoothRoot.visible) return;
+  locked = true;
+  lockPos.copy(smoothRoot.position);
+  lockQuat.copy(smoothRoot.quaternion);
+  motionSReady = false;                      // restart gyro smoothing from now
+  if (motionHasData) { motionS.copy(motionQ); motionSReady = true; }
+  lockQ0.copy(motionS);
+  lockHasBase = motionHasData && GYRO_COMPENSATION;
+  rescanButton.style.display = "block";
+  showHint("Locked in place  -  tap Re-scan to realign", 2500);
+  console.log("🔒 Content locked in place");
+}
+
+function updateSmoothPose() {
+  if (locked) {
+    updateWorldLock();
+    return;                     // tracking is ignored while locked
+  }
+
+  if (!anchor.group.visible) {
+    smoothHasPose = false;      // next detection snaps straight to the pose
+    return;                     // (content stays put until it locks)
+  }
+
+  anchor.group.matrix.decompose(_rawPos, _rawQuat, _rawScale);
+
+  if (!smoothHasPose) {
+    smoothRoot.position.copy(_rawPos);
+    smoothRoot.quaternion.copy(_rawQuat);
+    smoothRoot.scale.copy(_rawScale);
+    smoothHasPose = true;
+  } else {
+    const moved = smoothRoot.position.distanceTo(_rawPos) / Math.max(_rawScale.x, 1e-6);
+    const rotated = smoothRoot.quaternion.angleTo(_rawQuat);
+    const a = THREE.MathUtils.clamp(
+      Math.max(moved * SMOOTH_POS_GAIN, rotated * SMOOTH_ROT_GAIN),
+      SMOOTH_MIN_ALPHA,
+      1
+    );
+    smoothRoot.position.lerp(_rawPos, a);
+    smoothRoot.quaternion.slerp(_rawQuat, a);
+    smoothRoot.scale.lerp(_rawScale, a);
+  }
+
+  smoothRoot.visible = true;
+}
 
 
 // ============================================================
@@ -181,6 +358,8 @@ const decorTextures = await Promise.all(
   )
 );
 
+const faceMeshes = [];   // meshes that are turned to face the camera every frame
+
 const decorLayers = DECOR.map((d, i) => {
 
   const tex = decorTextures[i];
@@ -217,6 +396,7 @@ const decorLayers = DECOR.map((d, i) => {
 
   return {
     id: d.id,
+    face: !!d.face,
     mesh,
     material,
     basePos: mesh.position.clone(),
@@ -225,6 +405,10 @@ const decorLayers = DECOR.map((d, i) => {
     active: false
   };
 }).filter(Boolean);
+
+if (FACE_CAMERA_PAGE_TEXT) {
+  decorLayers.filter((l) => l.face).forEach((l) => faceMeshes.push(l.mesh));
+}
 
 
 // ============================================================
@@ -414,7 +598,8 @@ function registerIcon(id, sprites, textMesh = null) {
     state: 0,
     spawning: false,
     spawnTime: 0,
-    spawnDelay: 0
+    spawnDelay: 0,
+    zoom: 1
   };
   icons.push(icon);
   sprites.forEach((sprite) => meshToIcon.set(sprite.mesh, icon));
@@ -516,7 +701,10 @@ const TEXT_INDENT = 17;         // bullet text and its wrapped lines
 const TEXT_ASCENT = 0.78;       // top of tall letters, as a fraction of font size
 
 const TEXT_RES = 2;             // canvas pixels per page pixel (sharper text)
-const TEXT_BOX_ALPHA = 0.55;    // dark box behind each text row. 0 = no box
+const TEXT_BOX_ALPHA = 1;       // box behind the text. 1 = solid black, lower = see-through, 0 = none
+const BOX_PAD_X = 12;           // space between the text and the box edge (page px)
+const BOX_RADIUS = 9;           // rounded corner size (page px)
+const BOX_GROUP_TRIM = 2.5;     // trims each group's top/bottom, leaving a small gap between bullets
 const SUP_SCALE = 0.6;          // size of a ^superscript character
 const SUP_RAISE = 0.38;         // how far it is lifted (fraction of font size)
 
@@ -544,6 +732,106 @@ function lineWidth(line) {
   }, 0);
 }
 
+// Rectangle path with its own radius on each corner (0 = square corner).
+function cornerRectPath(ctx, x, y, w, h, tl, tr, br, bl) {
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  if (tr) ctx.arc(x + w - tr, y + tr, tr, -Math.PI / 2, 0);
+  ctx.lineTo(x + w, y + h - br);
+  if (br) ctx.arc(x + w - br, y + h - br, br, 0, Math.PI / 2);
+  ctx.lineTo(x + bl, y + h);
+  if (bl) ctx.arc(x + bl, y + h - bl, bl, Math.PI / 2, Math.PI);
+  ctx.lineTo(x, y + tl);
+  if (tl) ctx.arc(x + tl, y + tl, tl, Math.PI, Math.PI * 1.5);
+  ctx.closePath();
+}
+
+// Smooth "inside corner" where two rows of different width meet.
+// (cx, cy) is the corner; the empty space is to its right, above it
+// (below = false) or under it (below = true).
+function filletPath(ctx, cx, cy, r, below) {
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + r, cy);
+  if (below) ctx.arc(cx + r, cy + r, r, -Math.PI / 2, -Math.PI, true);
+  else ctx.arc(cx + r, cy - r, r, Math.PI / 2, Math.PI, false);
+  ctx.closePath();
+}
+
+// Black rounded boxes behind the text. Every group of lines (the heading, or one
+// bullet with its wrapped lines) becomes ONE joined shape with rounded outer corners
+// and smooth inside corners, like a text highlight. Groups are separated by a small gap.
+// Drawn solid on a scratch canvas, then laid over the text canvas at TEXT_BOX_ALPHA,
+// so overlaps never look darker.
+function drawTextBoxes(ctx, lines, pad) {
+
+  const groups = new Map();
+  lines.forEach((l) => {
+    const rows = groups.get(l.group) || new Map();
+    const r = rows.get(l.baseline) || { baseline: l.baseline, x1: -Infinity, size: 0 };
+    r.x1 = Math.max(r.x1, l.x + l.w);
+    r.size = Math.max(r.size, l.size);
+    rows.set(l.baseline, r);
+    groups.set(l.group, rows);
+  });
+
+  const left = Math.min(...lines.map((l) => l.x)) - BOX_PAD_X;   // one straight left edge
+  const R = BOX_RADIUS;
+
+  const layer = document.createElement("canvas");
+  layer.width = ctx.canvas.width;
+  layer.height = ctx.canvas.height;
+  const lc = layer.getContext("2d");
+  lc.scale(TEXT_RES, TEXT_RES);
+  lc.translate(pad, pad);
+  lc.fillStyle = "#000";
+
+  groups.forEach((rowMap) => {
+
+    const rows = [...rowMap.values()].sort((a, b) => a.baseline - b.baseline);
+    const n = rows.length;
+    const right = rows.map((r) => r.x1 + BOX_PAD_X);
+    const mid = rows.map((r) => r.baseline - 0.26 * r.size);                    // middle of the letters
+    const halfH = rows.map((r) => Math.max(TEXT_BODY_PITCH + 2, r.size * 1.5) / 2);
+
+    // a step smaller than a corner looks fussy: make those neighbours equally wide
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < n - 1; i++) {
+        if (Math.abs(right[i] - right[i + 1]) < 2 * R) {
+          right[i] = right[i + 1] = Math.max(right[i], right[i + 1]);
+        }
+      }
+    }
+
+    // row edges: rows touch each other; the group is trimmed at both ends
+    const edge = [mid[0] - halfH[0] + BOX_GROUP_TRIM];
+    for (let i = 0; i < n - 1; i++) edge.push((mid[i] + mid[i + 1]) / 2);
+    edge.push(mid[n - 1] + halfH[n - 1] - BOX_GROUP_TRIM);
+
+    for (let i = 0; i < n; i++) {
+      const top = edge[i] - (i > 0 ? 0.5 : 0);                 // tiny overlap hides seams
+      const bottom = edge[i + 1] + (i < n - 1 ? 0.5 : 0);
+      const tr = i === 0 || right[i] > right[i - 1] ? R : 0;
+      const br = i === n - 1 || right[i] > right[i + 1] ? R : 0;
+      lc.beginPath();
+      cornerRectPath(lc, left, top, right[i] - left, bottom - top, i === 0 ? R : 0, tr, br, i === n - 1 ? R : 0);
+      lc.fill();
+    }
+
+    // smooth inside corners where neighbouring rows have different widths
+    for (let i = 0; i < n - 1; i++) {
+      if (right[i] === right[i + 1]) continue;
+      lc.beginPath();
+      if (right[i + 1] > right[i]) filletPath(lc, right[i], edge[i + 1], R, false);
+      else filletPath(lc, right[i + 1], edge[i + 1], R, true);
+      lc.fill();
+    }
+  });
+
+  ctx.globalAlpha = TEXT_BOX_ALPHA;
+  ctx.drawImage(layer, 0, 0);
+  ctx.globalAlpha = 1;
+}
+
 // Draws pre-positioned lines onto one transparent canvas and returns a mesh.
 //   line = { text, font, size, x, baseline }
 //   x / baseline are in page pixels from the block's top-left; the block's
@@ -560,7 +848,7 @@ function buildTextMesh(lines, { align = "left", box = true } = {}) {
   const blockH = Math.max(...lines.map((l) => l.baseline + l.size * 0.26));
 
   const showBox = box && TEXT_BOX_ALPHA > 0;
-  const PAD = showBox ? 10 : 4;   // spare page pixels around the block
+  const PAD = showBox ? 18 : 4;   // spare page pixels around the block
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil((blockW + PAD * 2) * TEXT_RES);
   canvas.height = Math.ceil((blockH + PAD * 2) * TEXT_RES);
@@ -568,26 +856,7 @@ function buildTextMesh(lines, { align = "left", box = true } = {}) {
   const ctx = canvas.getContext("2d");
   ctx.textBaseline = "alphabetic";
 
-  // Optional dark box behind each row of text (off by default)
-  if (showBox) {
-    const rows = new Map();
-    lines.forEach((l) => {
-      const r = rows.get(l.baseline) || { x0: Infinity, x1: -Infinity, size: 0 };
-      r.x0 = Math.min(r.x0, l.x);
-      r.x1 = Math.max(r.x1, l.x + l.w);
-      r.size = Math.max(r.size, l.size);
-      rows.set(l.baseline, r);
-    });
-    ctx.fillStyle = `rgba(0, 0, 0, ${TEXT_BOX_ALPHA})`;
-    rows.forEach((r, baseline) => {
-      ctx.fillRect(
-        (PAD + r.x0 - 7) * TEXT_RES,
-        (PAD + baseline - TEXT_ASCENT * r.size - 2.5) * TEXT_RES,
-        (r.x1 - r.x0 + 14) * TEXT_RES,
-        (r.size + 5) * TEXT_RES
-      );
-    });
-  }
+  if (showBox) drawTextBoxes(ctx, lines, PAD);
 
   ctx.fillStyle = "#ffffff";
   lines.forEach((l) => {
@@ -630,7 +899,7 @@ function buildTextMesh(lines, { align = "left", box = true } = {}) {
 }
 
 // Puts a text block's top-left corner at (left, top) on the 1080 x 1920 page.
-function placeTextBlock(mesh, left, top, z = 0.10) {
+function placeTextBlock(mesh, left, top, z = 0.02) {
   const { blockW, blockH } = mesh.userData;
   const pos = frameToAnchor(left + blockW / 2, top + blockH / 2, z);
   mesh.position.set(pos.x, pos.y, pos.z);
@@ -645,18 +914,19 @@ function createTextPanel({ heading, bullets }) {
 
   heading.forEach((text, i) => {
     if (i > 0) baseline += TEXT_HEAD_PITCH;
-    lines.push({ text, font: "bd", size: TEXT_HEAD_SIZE, x: 0, baseline });
+    lines.push({ text, font: "bd", size: TEXT_HEAD_SIZE, x: 0, baseline, group: 0 });
   });
 
   let firstBullet = true;
-  bullets.forEach((bullet) => {
+  bullets.forEach((bullet, k) => {
+    const group = k + 1;            // the heading is group 0, each bullet is its own group
     bullet.forEach((text, j) => {
       baseline += firstBullet ? TEXT_HEAD_GAP : TEXT_BODY_PITCH;
       firstBullet = false;
       if (j === 0) {
-        lines.push({ text: "•", font: "md", size: TEXT_BODY_SIZE, x: TEXT_BULLET_X, baseline });
+        lines.push({ text: "•", font: "md", size: TEXT_BODY_SIZE, x: TEXT_BULLET_X, baseline, group });
       }
-      lines.push({ text, font: "md", size: TEXT_BODY_SIZE, x: TEXT_INDENT, baseline });
+      lines.push({ text, font: "md", size: TEXT_BODY_SIZE, x: TEXT_INDENT, baseline, group });
     });
   });
 
@@ -775,6 +1045,7 @@ const earthText = createTextPanel({
 [animalsText, brainText, crmText, dropText, doctorText, earthText].forEach((mesh) => {
   stage.add(mesh);
   mesh.visible = false;
+  if (FACE_CAMERA_CALLOUTS) faceMeshes.push(mesh);
 });
 
 // Registration order = spawn order (animals first, earth last).
@@ -843,15 +1114,15 @@ placeSingleIcon(earthSprite, 0.31, 0.83, 0.25);    // globe
 // --------------------------------------------------------------
 
 const TEXT_SPOTS = {
-  brain:   { left: 555, top: 556  },   // right of the brain, in the mountain gap
-  animals: { left: 555, top: 556  },   // same slot (only one panel shows at a time)
+  brain:   { left: 555, top: 500  },   // right of the brain, in the mountain gap
+  animals: { left: 620, top: 483  },   // same slot (only one panel shows at a time)
   crm:     { left: 107, top: 1010 },   // under the CRM ring
   drop:    { left: 687, top: 1190 },   // under the drop icon
   doctor:  { left: 561, top: 1366 },   // under the scientist
   earth:   { left: 109, top: 1197 }    // upper-left of the globe
 };
 
-function placeCallout(mesh, spot, z = 0.10) {
+function placeCallout(mesh, spot, z = 0.02) {
   // -1: the text origin sits 1px left of the first letter's ink
   placeTextBlock(mesh, spot.left - 1, spot.top, z);
 }
@@ -913,6 +1184,7 @@ if (SHOW_PAGE_TEXT) {
     mesh.material.opacity = 0;
     mesh.visible = false;
     stage.add(mesh);
+    if (FACE_CAMERA_PAGE_TEXT) faceMeshes.push(mesh);
 
     decorLayers.push({
       id: t.id,
@@ -1088,6 +1360,26 @@ function updateSpawn(icon, delta) {
 }
 
 
+// ---------------- slight zoom on the tapped icon ----------------
+// The active icon grows a little and eases back when it is deselected.
+
+const ICON_ACTIVE_ZOOM = 1.25;   // 1.0 = no zoom, 1.25 = noticeable
+const ICON_ZOOM_SMOOTH = 90;     // ms time constant, lower = snappier
+
+function updateIconZoom(icon, delta) {
+  if (icon.spawning) return;                       // spawn animation owns the scale
+  const target = icon.state === 1 ? ICON_ACTIVE_ZOOM : 1;
+  if (Math.abs(target - icon.zoom) < 0.0005 && icon.zoom === target) return;
+
+  icon.zoom += (target - icon.zoom) * (1 - Math.exp(-delta / ICON_ZOOM_SMOOTH));
+  if (Math.abs(target - icon.zoom) < 0.0005) icon.zoom = target;
+
+  icon.sprites.forEach((s) => {
+    s.mesh.scale.set(s.baseScale.x * icon.zoom, s.baseScale.y * icon.zoom, 1);
+  });
+}
+
+
 // ============================================================
 // VISIBILITY (all hidden until target found)
 // ============================================================
@@ -1153,25 +1445,134 @@ document.addEventListener(
 // TARGET FOUND / LOST
 // ============================================================
 
-anchor.onTargetFound = () => {
-  console.log("✅ BROCHURE TARGET FOUND");
+let contentShown = false;
+
+function showContent() {
+  contentShown = true;
+  hideHint();
   startMapSpawn();                // map first, icons follow after ICON_START_DELAY
   startDecorSpawn();              // logo, mountains, waves fade in with the map
   icons.forEach((icon, i) => {
     setIconVisible(icon, true);
     startSpawn(icon, i);          // i = order in which they pop in
   });
-};
+  // Give the pose a moment to settle, then lock everything in place.
+  clearTimeout(lockTimer);
+  lockTimer = setTimeout(lockContent, LOCK_DELAY);
+}
 
-anchor.onTargetLost = () => {
-  console.log("❌ BROCHURE TARGET LOST");
+function hideContent() {
+  contentShown = false;
   hideMap();
   hideDecor();
   icons.forEach((icon) => {
     icon.spawning = false;
     setIconVisible(icon, false);
   });
+  smoothRoot.visible = false;
+}
+
+anchor.onTargetFound = () => {
+  console.log("✅ BROCHURE TARGET FOUND");
+  if (contentShown) return;       // already shown (and locked): ignore re-detections
+  showContent();
 };
+
+anchor.onTargetLost = () => {
+  console.log("❌ BROCHURE TARGET LOST");
+  // Nothing to do: content stays where it is (frozen, then world-locked).
+};
+
+// ---------------- Re-scan button + hint ----------------
+
+const rescanButton = document.createElement("button");
+rescanButton.textContent = "⟳  Re-scan";
+rescanButton.setAttribute("aria-label", "Re-scan brochure");
+Object.assign(rescanButton.style, {
+  position: "fixed",
+  bottom: "calc(env(safe-area-inset-bottom, 0px) + 22px)",
+  zIndex: "10000",
+  display: "none",
+  padding: "12px 20px",
+  border: "1px solid rgba(255,255,255,0.35)",
+  borderRadius: "999px",
+  background: "rgba(0,0,0,0.6)",
+  color: "#fff",
+  font: "600 15px system-ui, -apple-system, sans-serif",
+  letterSpacing: "0.02em",
+  backdropFilter: "blur(6px)",
+  webkitBackdropFilter: "blur(6px)",
+  touchAction: "manipulation",
+  userSelect: "none",
+  cursor: "pointer"
+});
+if (RESCAN_BUTTON_POS === "center") {
+  rescanButton.style.left = "50%";
+  rescanButton.style.transform = "translateX(-50%)";
+} else {
+  rescanButton.style.right = "16px";
+}
+document.body.appendChild(rescanButton);
+
+const hintEl = document.createElement("div");
+Object.assign(hintEl.style, {
+  position: "fixed",
+  top: "calc(env(safe-area-inset-top, 0px) + 18px)",
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: "10000",
+  display: "none",
+  maxWidth: "86vw",
+  padding: "10px 16px",
+  borderRadius: "999px",
+  background: "rgba(0,0,0,0.6)",
+  color: "#fff",
+  font: "500 14px system-ui, -apple-system, sans-serif",
+  textAlign: "center",
+  pointerEvents: "none"
+});
+document.body.appendChild(hintEl);
+
+let hintTimer = null;
+function showHint(text, ms = 0) {
+  hintEl.textContent = text;
+  hintEl.style.display = "block";
+  clearTimeout(hintTimer);
+  if (ms > 0) hintTimer = setTimeout(hideHint, ms);
+}
+function hideHint() {
+  clearTimeout(hintTimer);
+  hintEl.style.display = "none";
+}
+
+function rescan() {
+  console.log("🔄 Re-scan requested");
+  clearTimeout(lockTimer);
+  lockTimer = null;
+  locked = false;
+  lockHasBase = false;
+  smoothHasPose = false;
+  activeIcon = null;
+  hideContent();
+  rescanButton.style.display = "none";
+  if (anchor.group.visible) {
+    showContent();                // brochure is already in view: pop straight back in
+  } else {
+    showHint("Point the camera at the brochure");
+  }
+}
+
+// Keep button presses from also counting as taps on the AR scene.
+["pointerdown", "touchstart"].forEach((type) =>
+  rescanButton.addEventListener(type, (e) => e.stopPropagation(), { passive: true })
+);
+rescanButton.addEventListener("click", (e) => {
+  e.stopPropagation();
+  askMotionPermission();
+  rescan();
+});
+
+showHint("Point the camera at the brochure");
 
 
 // ============================================================
@@ -1182,6 +1583,26 @@ await mindarThree.start();
 
 console.log("📷 MindAR camera started");
 console.log("🔎 Looking for brochure...");
+
+
+// ============================================================
+// UPRIGHT TEXT (face the camera)
+// ============================================================
+// Each mesh's world rotation is set to the camera's, so it sits flat to the
+// screen with no tilt. Its POSITION still follows the brochure, so it stays
+// in its place on the page. (The stage group has no rotation of its own.)
+
+const _pageQ = new THREE.Quaternion();
+const _camQ = new THREE.Quaternion();
+
+function updateFaceCamera() {
+  if (faceMeshes.length === 0 || !smoothRoot.visible) return;
+  smoothRoot.updateWorldMatrix(true, false);
+  smoothRoot.getWorldQuaternion(_pageQ).invert();      // undo the page's rotation
+  camera.getWorldQuaternion(_camQ);
+  _pageQ.multiply(_camQ);                              // ...then apply the camera's
+  faceMeshes.forEach((m) => m.quaternion.copy(_pageQ));
+}
 
 
 // ============================================================
@@ -1196,9 +1617,12 @@ renderer.setAnimationLoop(() => {
   const delta = now - previousTime;
   previousTime = now;
 
+  updateSmoothPose();   // must run before anything that reads the page pose
+  updateFaceCamera();
   updateMapSpawn(delta);
   updateDecorSpawn(delta);
   icons.forEach((icon) => updateSpawn(icon, delta));
+  icons.forEach((icon) => updateIconZoom(icon, delta));
   icons.forEach((icon) => updateTextFade(icon, delta));
 
   icons.forEach((icon) => {
