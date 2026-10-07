@@ -4,7 +4,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     allowedHosts: [
-      "dpi-suggesting-hitachi-structures.trycloudflare.com"
+      "commodities-nutrition-sole-surely.trycloudflare.com"
     ]
   }
 });

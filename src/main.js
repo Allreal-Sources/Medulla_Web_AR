@@ -11,6 +11,110 @@ import {
 
 
 // ============================================================
+// OPENING SCREEN (shown while loading, before the scan starts)
+// ============================================================
+// Dark green page with a spinner, progress bar and 3 quick steps.
+// It is built here, so nothing else is needed. (If index.html already
+// contains an element with id="ar-loader" -- see loader-snippet.html --
+// that one is used instead, which also removes the blank flash while the
+// libraries download.)
+//   arLoader.set(percent, "text")  move the bar (never goes backwards)
+//   arLoader.tick()                one loading step finished
+//   arLoader.done()                fade the screen out
+//   arLoader.error("text")         show a problem instead of spinning forever
+
+const LOADER_STEPS = 9;   // 8 GIFs + the fonts: each one moves the bar a little
+
+const arLoader = (() => {
+
+  const css = `
+#ar-loader{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:radial-gradient(120% 90% at 50% 0%,#12372f 0%,#0a2a23 45%,#06201a 100%);color:#eafaf1;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;transition:opacity .5s ease}
+#ar-loader.arl-hide{opacity:0;pointer-events:none}
+#ar-loader .arl-wrap{width:min(360px,100%);text-align:center}
+#ar-loader .arl-spinner{width:48px;height:48px;margin:0 auto 22px;border-radius:50%;border:4px solid rgba(255,255,255,.14);border-top-color:#17e06b;animation:arl-spin 1s linear infinite}
+#ar-loader.arl-err .arl-spinner{animation:none;border-color:#ff6b6b}
+#ar-loader .arl-title{font-size:18px;font-weight:700;color:#fff;margin:0 0 6px}
+#ar-loader .arl-sub{font-size:14px;color:#9fb8ae;margin:0 0 16px;min-height:1.3em}
+#ar-loader .arl-bar{height:5px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
+#ar-loader .arl-fill{height:100%;width:0;border-radius:99px;background:#17e06b;transition:width .35s ease}
+#ar-loader .arl-card{margin-top:26px;padding:18px 20px;border-radius:14px;background:rgba(255,255,255,.07);text-align:left}
+#ar-loader .arl-step{display:flex;gap:12px;align-items:flex-start;font-size:14px;font-weight:500;line-height:1.35;color:#f2fbf6}
+#ar-loader .arl-step+.arl-step{margin-top:14px}
+#ar-loader .arl-step b{color:#fff;font-weight:700}
+#ar-loader .arl-num{flex:none;width:22px;height:22px;border-radius:50%;background:#17e06b;color:#04261c;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+#ar-loader .arl-note{margin:18px 0 0;font-size:11.5px;line-height:1.4;color:#8aa69b;text-align:center}
+@keyframes arl-spin{to{transform:rotate(360deg)}}`;
+
+  const html = `
+<div class="arl-wrap">
+  <div class="arl-spinner"></div>
+  <p class="arl-title">Preparing your AR experience</p>
+  <p class="arl-sub" id="arl-sub">Loading... please wait</p>
+  <div class="arl-bar"><div class="arl-fill" id="arl-fill"></div></div>
+  <div class="arl-card">
+    <div class="arl-step"><span class="arl-num">1</span><span>Tap <b>Allow</b> when asked for camera access</span></div>
+    <div class="arl-step"><span class="arl-num">2</span><span>Point your phone at the brochure page and keep the whole page in view</span></div>
+    <div class="arl-step"><span class="arl-num">3</span><span>Hold steady, then tap an icon to explore</span></div>
+  </div>
+  <p class="arl-note">The first load can take a few seconds. Please keep this screen open.</p>
+</div>`;
+
+  let root = document.getElementById("ar-loader");
+  if (!root) {
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
+    root = document.createElement("div");
+    root.id = "ar-loader";
+    root.innerHTML = html;
+    document.body.appendChild(root);
+  }
+
+  const fill = root.querySelector("#arl-fill");
+  const sub = root.querySelector("#arl-sub");
+  let pct = 0;
+  let finished = false;
+
+  const api = {
+    set(p, text) {
+      if (finished) return;
+      pct = Math.max(pct, Math.min(100, p));
+      fill.style.width = pct + "%";
+      if (text) sub.textContent = text;
+    },
+    tick() {
+      // each loading step moves the bar from 20% towards 85%
+      api.set(pct + (85 - 20) / LOADER_STEPS);
+    },
+    done() {
+      if (finished) return;
+      api.set(100, "Ready");
+      finished = true;
+      setTimeout(() => {
+        root.classList.add("arl-hide");
+        setTimeout(() => root.remove(), 600);
+      }, 350);
+    },
+    error(text) {
+      finished = true;
+      root.classList.add("arl-err");
+      sub.textContent = text;
+    }
+  };
+
+  // If something fails while loading, say so instead of spinning forever.
+  window.addEventListener("unhandledrejection", () => {
+    if (!finished) api.error("Something went wrong. Please reload the page.");
+  });
+  window.addEventListener("error", () => {
+    if (!finished) api.error("Something went wrong. Please reload the page.");
+  });
+
+  return api;
+})();
+
+
+// ============================================================
 // CONFIG
 // ============================================================
 
@@ -291,6 +395,8 @@ const textureLoader = new THREE.TextureLoader();
 const mapTexture =
   await textureLoader.loadAsync(INDIA_MAP);
 
+arLoader.set(10, "Loading brochure...");
+
 const BROCHURE_ASPECT =
   mapTexture.image.height / mapTexture.image.width;
 
@@ -357,6 +463,8 @@ const decorTextures = await Promise.all(
     })
   )
 );
+
+arLoader.set(20, "Loading animations...");
 
 const faceMeshes = [];   // meshes that are turned to face the camera every frame
 
@@ -570,6 +678,7 @@ async function loadGif(url, speed = 0.5) {
   const height = gif.lsd.height;
 
   console.log(`✅ ${url} → ${frames.length} frames`);
+  arLoader.tick();
 
   return new GifSprite(frames, width, height, speed);
 }
@@ -685,6 +794,7 @@ async function loadBoehringerFonts() {
       }
     })
   );
+  arLoader.tick();
 }
 
 function cssFont(key, sizePx) {
@@ -1579,7 +1689,14 @@ showHint("Point the camera at the brochure");
 // START
 // ============================================================
 
-await mindarThree.start();
+arLoader.set(88, "Almost ready... tap Allow if asked");
+try {
+  await mindarThree.start();
+} catch (err) {
+  arLoader.error("Camera could not start. Please allow camera access and reload.");
+  throw err;
+}
+arLoader.done();
 
 console.log("📷 MindAR camera started");
 console.log("🔎 Looking for brochure...");
