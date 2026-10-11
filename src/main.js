@@ -880,7 +880,8 @@ function setIconVisible(icon, visible) {
 const FONT_FACES = {
   bd:   { family: "BIFwd-Bd",   url: "/fonts/BoehringerForwardText-Bd.ttf"   },  // headings
   md:   { family: "BIFwd-Md",   url: "/fonts/BoehringerForwardText-Md.ttf"   },  // bullets
-  bdit: { family: "BIFwd-BdIt", url: "/fonts/BoehringerForwardText-BdIt.ttf" }   // italic tagline
+  bdit: { family: "BIFwd-BdIt", url: "/fonts/BoehringerForwardText-BdIt.ttf" },  // italic tagline
+  reg:  { family: "BIFwd-Rg",   url: "/fonts/BoehringerForwardText.ttf"      }   // footnote (Regular)
 };
 
 // A font that fails to load falls back to Bold, then a system font,
@@ -921,6 +922,115 @@ const BOX_RADIUS = 9;           // rounded corner size (page px)
 const BOX_GROUP_TRIM = 2.5;     // trims each group's top/bottom, leaving a small gap between bullets
 const SUP_SCALE = 0.6;          // size of a ^superscript character
 const SUP_RAISE = 0.38;         // how far it is lifted (fraction of font size)
+
+// ---- Callout look ---------------------------------------------------------
+// "card"      = white rounded card with a soft shadow, green heading and dark
+//               green text (the client's new design)
+// "highlight" = the earlier black rounded highlight behind white text
+const CALLOUT_STYLE = "card";
+
+// Exact layout of each callout card, taken from the client's PDF
+// (BI_Brochure_A4_frame_08102026.pdf). Every card is 482.5 wide; the height and
+// the line breaks differ per panel. All numbers are page pixels, measured from
+// the card's top-left corner.
+//   ["h", text, x, baseline]          heading line (Bold)
+//   ["b", text, x, baseline, dotX]    first line of a bullet, with its dot
+//   ["c", text, x, baseline]          continuation line of a bullet
+// cx / cy = where the card's centre sits on the 1080 x 1920 page.
+const CARD_LAYOUTS = {
+  brain: { w: 482.5, h: 401.9, cx: 454.1, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Strengthening the", 45.3, 64.5],
+      ["h", "stroke ecosystem", 45.3, 100.5],
+      ["b", "450+ stroke-ready hospitals", 66.0, 156.5, 46.4],
+      ["c", "supported since 2016", 66.0, 188.5],
+      ["b", "14 states and Union Territories", 66.0, 236.5, 46.4],
+      ["c", "within EMRI collaboration footprint", 66.0, 267.5],
+      ["b", "Guinness World Record for", 66.0, 320.5, 46.4],
+      ["c", "stroke-awareness pledges", 66.0, 351.5]
+    ]
+  },
+  animals: { w: 482.5, h: 401.9, cx: 451.6, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Connecting animal health", 45.3, 64.5],
+      ["h", "and community wellbeing", 45.3, 100.5],
+      ["b", "Advancing disease prevention", 61.4, 155.5, 42.7],
+      ["c", "through vaccination and biosecurity", 61.4, 186.5],
+      ["b", "Supporting poultry, ruminant and", 61.4, 239.5, 42.7],
+      ["c", "companion animal health", 61.4, 271.5],
+      ["b", "Strengthening food security,", 61.4, 319.5, 42.7],
+      ["c", "livelihoods and healthier communities", 61.4, 351.5]
+    ]
+  },
+  drop: { w: 482.5, h: 338.7, cx: 469.4, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Advancing science through", 31.8, 60.9],
+      ["h", "research collaboration", 31.8, 95.9],
+      ["b", "Research collaborations with", 53.8, 152.9, 31.8],
+      ["c", "NIPER institutions", 53.8, 184.9],
+      ["b", "223 opnMe® molecules shipped", 53.8, 237.9, 31.8],
+      ["b", "3 winning research collaborations", 53.8, 289.9, 31.8]
+    ]
+  },
+  doctor: { w: 482.5, h: 344.4, cx: 484.1, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Contributing to", 33.6, 60.7],
+      ["h", "global clinical research", 33.6, 96.7],
+      ["b", "13 active Phase II/III studies*", 54.4, 152.7, 33.6],
+      ["b", "8 therapy areas*", 54.4, 204.7, 33.6],
+      ["b", "2,500+ patients involved in clinical", 54.4, 254.7, 33.6],
+      ["c", "research since inception*", 54.4, 286.7]
+    ]
+  },
+  earth: { w: 482.5, h: 322.1, cx: 455.2, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Bringing", 35.1, 61.6],
+      ["h", "innovation to India", 35.1, 97.6],
+      ["b", "13+ innovative molecules introduced", 55.5, 153.6, 35.1],
+      ["b", "400+ colleagues", 55.5, 203.6, 35.1],
+      ["b", "70+ locations", 55.5, 254.6, 35.1]
+    ]
+  },
+  crm: { w: 482.5, h: 507.1, cx: 457.8, cy: 1052.3,   // page centre of the card
+    lines: [
+      ["h", "Creating impact", 32.1, 57.2],
+      ["h", "beyond healthcare", 32.1, 92.2],
+      ["b", "40+ villages reached in Nandurbar", 53.8, 151.2, 32.1],
+      ["b", "7,000+ health check-ups", 53.8, 203.2, 32.1],
+      ["b", "150+ frontline workers trained in", 53.8, 255.2, 32.1],
+      ["c", "NCD early detection", 53.8, 287.2],
+      ["b", "350+ women supported through", 53.8, 340.2, 32.1],
+      ["c", "livelihood programmes", 53.8, 372.2],
+      ["b", "Mobile health access expanded to", 53.8, 424.2, 32.1],
+      ["c", "underserved communities", 53.8, 456.2]
+    ]
+  }
+};
+
+
+const CARD_HEAD_COLOR = "#40B984";   // heading + bullet dots
+const CARD_TEXT_COLOR = "#004B41";   // bullet text
+const CARD_BG = "#ffffff";
+const CARD_HEAD_SIZE = 29.3;         // page px
+const CARD_BODY_SIZE = 22;
+const CARD_HEAD_PITCH = 35.4;        // line spacing inside the heading
+const CARD_HEAD_GAP = 55;            // last heading line -> first bullet line
+const CARD_BODY_PITCH = 31.3;        // line spacing inside one bullet
+const CARD_BULLET_GAP = 54;          // last line of a bullet -> first line of the next
+const CARD_INDENT = 17;              // bullet text, from the dot
+const CARD_PAD_LEFT = 42;            // card edge -> text
+const CARD_PAD_RIGHT = 20;           // longest line -> card edge
+const CARD_PAD_TOP = 60;             // card top -> first baseline
+const CARD_PAD_BOTTOM = 50;          // last baseline -> card bottom
+const CARD_RADIUS = 24.5;
+const CARD_SHADOW_BLUR = 26;
+const CARD_SHADOW_ALPHA = 0.6;
+const CARD_SHADOW_DY = 10;
+const CARD_SHADOW_DX = 11;
+const CARD_OUTLINE = "#0b2e24";      // thin dark edge around the card
+const CARD_OUTLINE_W = 1.4;
+const CARD_HEAD_LAYOUT_SIZE = 29.5;  // sizes used by the PDF layout
+const CARD_BODY_LAYOUT_SIZE = 22.1;
 
 // "223 opnMe^®" -> [{ t: "223 opnMe" }, { t: "®", sup: true }]
 function splitSup(text) {
@@ -1051,18 +1161,37 @@ function drawTextBoxes(ctx, lines, pad) {
 //   x / baseline are in page pixels from the block's top-left; the block's
 //   top is the top of the first line's tall letters.
 // mesh.userData.blockW / blockH hold the block size in page pixels.
-function buildTextMesh(lines, { align = "left", box = true } = {}) {
+function buildTextMesh(lines, { align = "left", box = true, card = false } = {}) {
 
   lines.forEach((l) => { l.w = lineWidth(l); });
 
   const maxW = Math.max(...lines.map((l) => l.w));
   if (align === "right") lines.forEach((l) => { l.x = maxW - l.w; });
 
-  const blockW = Math.max(...lines.map((l) => l.x + l.w));
-  const blockH = Math.max(...lines.map((l) => l.baseline + l.size * 0.26));
+  let blockW = Math.max(...lines.map((l) => l.x + l.w));
+  let blockH = Math.max(...lines.map((l) => l.baseline + l.size * 0.26));
 
-  const showBox = box && TEXT_BOX_ALPHA > 0;
-  const PAD = showBox ? 18 : 4;   // spare page pixels around the block
+  const showBox = !card && box && TEXT_BOX_ALPHA > 0;
+  let PAD = showBox ? 18 : 4;   // spare page pixels around the block
+  let textDX = 0;               // where the text starts inside the canvas (page px)
+  let textDY = 0;
+  let cardRect = null;
+
+  if (card) {
+    // White card sized to its text. The text origin sits CARD_PAD_LEFT inside
+    // the card and the first line's baseline CARD_PAD_TOP below its top.
+    const first = Math.min(...lines.map((l) => l.baseline));
+    const last = Math.max(...lines.map((l) => l.baseline));
+    const cardW = CARD_PAD_LEFT + blockW + CARD_PAD_RIGHT;
+    const cardH = CARD_PAD_TOP + (last - first) + CARD_PAD_BOTTOM;
+    PAD = Math.ceil(CARD_SHADOW_BLUR * 1.6 + CARD_SHADOW_DY);   // room for the shadow
+    textDX = CARD_PAD_LEFT;
+    textDY = CARD_PAD_TOP - first;
+    cardRect = { x: PAD, y: PAD, w: cardW, h: cardH };
+    blockW = cardW;            // the "block" is now the whole card (used for placing it)
+    blockH = cardH;
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil((blockW + PAD * 2) * TEXT_RES);
   canvas.height = Math.ceil((blockH + PAD * 2) * TEXT_RES);
@@ -1072,10 +1201,12 @@ function buildTextMesh(lines, { align = "left", box = true } = {}) {
 
   if (showBox) drawTextBoxes(ctx, lines, PAD);
 
-  ctx.fillStyle = "#ffffff";
+  if (cardRect) drawCardShape(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h);
+
   lines.forEach((l) => {
-    let x = (PAD + l.x) * TEXT_RES;
-    const y = (PAD + l.baseline) * TEXT_RES;
+    ctx.fillStyle = l.color || "#ffffff";
+    let x = (PAD + textDX + l.x) * TEXT_RES;
+    const y = (PAD + textDY + l.baseline) * TEXT_RES;
     splitSup(l.text).forEach((p) => {
       ctx.font = cssFont(l.font, l.size * (p.sup ? SUP_SCALE : 1) * TEXT_RES);
       ctx.fillText(p.t, x, y - (p.sup ? l.size * SUP_RAISE * TEXT_RES : 0));
@@ -1119,9 +1250,87 @@ function placeTextBlock(mesh, left, top, z = 0.02) {
   mesh.position.set(pos.x, pos.y, pos.z);
 }
 
+// White rounded card with the PDF's soft shadow and thin dark edge.
+// x / y / w / h are page pixels inside the canvas.
+function drawCardShape(ctx, px, py, pw, ph) {
+  const k = TEXT_RES;
+  const x = px * k, y = py * k, w = pw * k, h = ph * k, r = CARD_RADIUS * k;
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  };
+  ctx.save();
+  ctx.shadowColor = `rgba(0,0,0,${CARD_SHADOW_ALPHA})`;
+  ctx.shadowBlur = CARD_SHADOW_BLUR * k;
+  ctx.shadowOffsetX = CARD_SHADOW_DX * k;
+  ctx.shadowOffsetY = CARD_SHADOW_DY * k;
+  ctx.fillStyle = CARD_BG;
+  path();
+  ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = CARD_OUTLINE;
+  ctx.lineWidth = CARD_OUTLINE_W * k;
+  path();
+  ctx.stroke();
+}
+
+// A card laid out exactly like the PDF (CARD_LAYOUTS).
+function createLayoutCard(L) {
+  const PAD = Math.ceil(CARD_SHADOW_BLUR + CARD_SHADOW_DX + 6);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil((L.w + PAD * 2) * TEXT_RES);
+  canvas.height = Math.ceil((L.h + PAD * 2) * TEXT_RES);
+  const ctx = canvas.getContext("2d");
+  ctx.textBaseline = "alphabetic";
+
+  drawCardShape(ctx, PAD, PAD, L.w, L.h);
+
+  L.lines.forEach(([kind, text, x, base, dotX]) => {
+    const head = kind === "h";
+    const font = head ? "bd" : "md";
+    const size = head ? CARD_HEAD_LAYOUT_SIZE : CARD_BODY_LAYOUT_SIZE;
+    const y = (PAD + base) * TEXT_RES;
+    if (kind === "b") {
+      ctx.font = cssFont("md", size * TEXT_RES);
+      ctx.fillStyle = CARD_HEAD_COLOR;
+      ctx.fillText("\u2022", (PAD + dotX) * TEXT_RES, y);
+    }
+    ctx.fillStyle = head ? CARD_HEAD_COLOR : CARD_TEXT_COLOR;
+    ctx.font = cssFont(font, size * TEXT_RES);
+    ctx.fillText(text, (PAD + x) * TEXT_RES, y);
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+
+  const material = new THREE.MeshBasicMaterial({
+    map: texture, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide
+  });
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(canvas.width / (TEXT_RES * FRAME_W), canvas.height / (TEXT_RES * FRAME_W)),
+    material
+  );
+  mesh.renderOrder = 200;
+  mesh.frustumCulled = false;
+  mesh.userData = { blockW: L.w, blockH: L.h, designCx: L.cx, designCy: L.cy };
+  return mesh;
+}
+
 // Callout: Bold heading, then Medium bullets with a hanging indent.
 //   heading: ["line", ...]        bullets: [["line", "wrapped line"], ...]
-function createTextPanel({ heading, bullets }) {
+function createTextPanel({ id, heading, bullets }) {
+
+  if (CALLOUT_STYLE === "card" && CARD_LAYOUTS[id]) return createLayoutCard(CARD_LAYOUTS[id]);
+  if (CALLOUT_STYLE === "card") return createCardPanel({ heading, bullets });
 
   const lines = [];
   let baseline = TEXT_ASCENT * TEXT_HEAD_SIZE;
@@ -1145,6 +1354,31 @@ function createTextPanel({ heading, bullets }) {
   });
 
   return buildTextMesh(lines);
+}
+
+// The white card version of a callout (CALLOUT_STYLE = "card").
+function createCardPanel({ heading, bullets }) {
+
+  const lines = [];
+  let baseline = 0;
+
+  heading.forEach((text, i) => {
+    if (i > 0) baseline += CARD_HEAD_PITCH;
+    lines.push({ text, font: "bd", size: CARD_HEAD_SIZE, x: 0, baseline, color: CARD_HEAD_COLOR });
+  });
+
+  bullets.forEach((bullet, k) => {
+    bullet.forEach((text, j) => {
+      if (k === 0 && j === 0) baseline += CARD_HEAD_GAP;
+      else baseline += j === 0 ? CARD_BULLET_GAP : CARD_BODY_PITCH;
+      if (j === 0) {
+        lines.push({ text: "\u2022", font: "md", size: CARD_BODY_SIZE, x: 0, baseline, color: CARD_HEAD_COLOR });
+      }
+      lines.push({ text, font: "md", size: CARD_BODY_SIZE, x: CARD_INDENT, baseline, color: CARD_TEXT_COLOR });
+    });
+  });
+
+  return buildTextMesh(lines, { card: true });
 }
 
 // Plain multi-line text (headline, tagline, footnote).
@@ -1172,7 +1406,7 @@ console.log("🎬 Loading icon GIFs + font (in parallel)...");
 
 const [
   , // font load result unused, just needed to finish before text panels draw
-  cowSprite,
+  //cowSprite,
  // duckSprite,
   henSprite,
   brainSprite,
@@ -1182,7 +1416,7 @@ const [
   earthSprite
 ] = await Promise.all([
   loadBoehringerFonts(),
-  loadGif("/assets/Cow.gif", GIF_SPEED),
+  //loadGif("/assets/Cow.gif", GIF_SPEED),
  // loadGif("/assets/Duck.gif", GIF_SPEED),
   loadGif("/assets/Hen.gif", GIF_SPEED),
   loadGif("/assets/Brain.gif", GIF_SPEED),
@@ -1201,16 +1435,18 @@ console.log("✅ All icon GIFs + font loaded");
 // --------------------------------------------------------------
 
 const animalsText = createTextPanel({
-  heading: ["Connecting animal health and", "community wellbeing"],
+  id: "animals",
+  heading: ["Connecting animal health", "and community wellbeing"],
   bullets: [
     ["Advancing disease prevention through", "vaccination and biosecurity"],
     ["Supporting poultry, ruminant and", "companion animal health"],
-    ["Strengthening food security, livelihoods", "and healthier communities"]
+    ["Strengthening food security,", "livelihoods and healthier communities"]
   ]
 });
 
 const brainText = createTextPanel({
-  heading: ["Strengthening the stroke ecosystem"],
+  id: "brain",
+  heading: ["Strengthening the", "stroke ecosystem"],
   bullets: [
     ["450+ stroke-ready hospitals", "supported since 2016"],
     ["14 states and Union Territories", "within EMRI collaboration footprint"],
@@ -1219,6 +1455,7 @@ const brainText = createTextPanel({
 });
 
 const crmText = createTextPanel({
+  id: "crm",
   heading: ["Creating impact beyond healthcare"],
   bullets: [
     ["40+ villages reached in Nandurbar"],
@@ -1230,6 +1467,7 @@ const crmText = createTextPanel({
 });
 
 const dropText = createTextPanel({
+  id: "drop",
   heading: ["Advancing science through", "research collaboration"],
   bullets: [
     ["Research collaborations", "with NIPER institutions"],
@@ -1239,6 +1477,7 @@ const dropText = createTextPanel({
 });
 
 const doctorText = createTextPanel({
+  id: "doctor",
   heading: ["Contributing to", "global clinical research"],
   bullets: [
     ["13 active Phase II/III studies*"],
@@ -1248,6 +1487,7 @@ const doctorText = createTextPanel({
 });
 
 const earthText = createTextPanel({
+  id: "earth",
   heading: ["Bringing innovation to India"],
   bullets: [
     ["13+ innovative", "molecules introduced"],
@@ -1263,7 +1503,7 @@ const earthText = createTextPanel({
 });
 
 // Registration order = spawn order (animals first, earth last).
-const animalsIcon = registerIcon("animals", [cowSprite,  henSprite], animalsText);
+const animalsIcon = registerIcon("animals", [henSprite], animalsText);
 const brainIcon = registerIcon("brain", [brainSprite], brainText);
 const crmIcon = registerIcon("crm", [crmSprite], crmText);
 const dropIcon = registerIcon("drop", [dropSprite], dropText);
@@ -1278,13 +1518,13 @@ icons.forEach((icon) => stage.add(...icon.sprites.map((s) => s.mesh)));
 // ============================================================
 
 //const DUCK_FX = 0.495;
-const COW_FX = 0.540;
-const HEN_FX = 0.665;
-const GROUND_FY = 0.500;
+//const COW_FX = 0.540;
+const HEN_FX = 0.575;
+const GROUND_FY = 0.450;
 
-const COW_SCALE = 0.17;
+//const COW_SCALE = 0.17;
 //const DUCK_SCALE = 0.095;
-const HEN_SCALE = 0.10;
+const HEN_SCALE = 0.15;
 
 function positionOnGround(sprite, fx, scale, groundFy) {
   const base = positionFromFraction(fx, groundFy);
@@ -1292,15 +1532,15 @@ function positionOnGround(sprite, fx, scale, groundFy) {
   return { x: base.x, y: base.y + worldHeight / 2, z: base.z };
 }
 
-cowSprite.mesh.scale.set(COW_SCALE, COW_SCALE, 1);
+//cowSprite.mesh.scale.set(COW_SCALE, COW_SCALE, 1);
 //duckSprite.mesh.scale.set(DUCK_SCALE, DUCK_SCALE, 1);
 henSprite.mesh.scale.set(HEN_SCALE, HEN_SCALE, 1);
 
-const cowPos = positionOnGround(cowSprite, COW_FX, COW_SCALE, GROUND_FY);
+//const cowPos = positionOnGround(cowSprite, COW_FX, COW_SCALE, GROUND_FY);
 //const duckPos = positionOnGround(duckSprite, DUCK_FX, DUCK_SCALE, GROUND_FY);
 const henPos = positionOnGround(henSprite, HEN_FX, HEN_SCALE, GROUND_FY);
 
-cowSprite.mesh.position.set(cowPos.x, cowPos.y, cowPos.z);
+//cowSprite.mesh.position.set(cowPos.x, cowPos.y, cowPos.z);
 //duckSprite.mesh.position.set(duckPos.x, duckPos.y, duckPos.z);
 henSprite.mesh.position.set(henPos.x, henPos.y, henPos.z);
 
@@ -1348,6 +1588,85 @@ placeCallout(dropText, TEXT_SPOTS.drop);
 placeCallout(doctorText, TEXT_SPOTS.doctor);
 placeCallout(earthText, TEXT_SPOTS.earth);
 
+// --------------------------------------------------------------
+// ONE COMMON SPOT: whichever icon is tapped, its text opens at the same
+// place -- the middle of the India map shape (not beside the icon). Only one
+// panel is visible at a time. Set TEXT_AT_MAP_CENTER = false to put each
+// panel beside its own icon again (TEXT_SPOTS above).
+//
+//   TEXT_CENTER_MODE:
+//     "design"   = where the client's design puts the card: a little left of the
+//                  middle of India (TEXT_DESIGN_FX / FY below)
+//     "centroid" = balance point of the India shape (middle of the country)
+//     "bbox"     = middle of the shape's bounding box
+//     "plane"    = middle of the whole map image
+//   TEXT_CENTER_NUDGE_X / _Y fine-tune it, in brochure widths
+//   (+x right, +y up), e.g. 0.05 = 5% of the brochure width.
+// --------------------------------------------------------------
+const TEXT_AT_MAP_CENTER = true;
+const TEXT_CENTER_MODE = "design";
+const TEXT_CENTER_NUDGE_X = 0;
+const TEXT_CENTER_NUDGE_Y = 0;
+const TEXT_DESIGN_FX = 0.357;  // across the India shape: 0 = west edge, 1 = east edge
+const TEXT_DESIGN_FY = 0.483;  // down the India shape:   0 = north tip,  1 = south tip
+// The cards in the PDF are not all in exactly the same place (a few pixels left /
+// right, one a bit lower). true = keep each card's own offset from the common
+// centre (design centre on the page: 455, 1040); false = identical centre.
+const TEXT_KEEP_DESIGN_OFFSETS = true;
+const DESIGN_REF_X = 455;
+const DESIGN_REF_Y = 1040;
+
+// Where the middle of the India shape is inside the map image
+// (0 - 1 across, 0 - 1 down), measured from the pixels that are not transparent.
+function measureMapCenter(image, mode) {
+  if (mode === "plane") return { fx: 0.5, fy: 0.5 };
+  try {
+    const W = 300;
+    const H = Math.max(1, Math.round(W * image.height / image.width));
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(image, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data;
+    let n = 0, sx = 0, sy = 0, x0 = W, x1 = -1, y0 = H, y1 = -1;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] > 40) {
+          n++; sx += x; sy += y;
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (n === 0) return { fx: 0.5, fy: 0.5 };
+    if (mode === "design") {
+      return {
+        fx: (x0 + (x1 + 1 - x0) * TEXT_DESIGN_FX) / W,
+        fy: (y0 + (y1 + 1 - y0) * TEXT_DESIGN_FY) / H
+      };
+    }
+    if (mode === "bbox") return { fx: (x0 + x1 + 1) / 2 / W, fy: (y0 + y1 + 1) / 2 / H };
+    return { fx: (sx / n + 0.5) / W, fy: (sy / n + 0.5) / H };
+  } catch (e) {
+    console.warn("Could not measure the map centre, using the middle of the image.", e);
+    return { fx: 0.5, fy: 0.5 };
+  }
+}
+
+if (TEXT_AT_MAP_CENTER) {
+  const mc = measureMapCenter(mapTexture.image, TEXT_CENTER_MODE);
+  const cx = mapMesh.position.x + (mc.fx - 0.5) + TEXT_CENTER_NUDGE_X;
+  const cy = mapMesh.position.y + (0.5 - mc.fy) * BROCHURE_ASPECT + TEXT_CENTER_NUDGE_Y;
+  console.log(`📍 Text centre on map: ${mc.fx.toFixed(3)}, ${mc.fy.toFixed(3)} (${TEXT_CENTER_MODE})`);
+
+  [brainText, animalsText, crmText, dropText, doctorText, earthText].forEach((mesh) => {
+    const ud = mesh.userData;
+    const dx = TEXT_KEEP_DESIGN_OFFSETS && ud.designCx !== undefined ? (ud.designCx - DESIGN_REF_X) / FRAME_W : 0;
+    const dy = TEXT_KEEP_DESIGN_OFFSETS && ud.designCy !== undefined ? -(ud.designCy - DESIGN_REF_Y) / FRAME_W : 0;
+    mesh.position.set(cx + dx, cy + dy, mesh.position.z);
+  });
+}
+
 
 // ============================================================
 // PAGE TEXT (headline, tagline, footnote)
@@ -1361,25 +1680,30 @@ const SHOW_PAGE_TEXT = true;
 
 const PAGE_TEXT = [
   {
-    id: "headline", align: "right", right: 1001, top: 170,
-    font: "bd", size: 34.7, pitch: 41.7, delay: 600,
+    id: "headline", align: "right", right: 1000.5, top: 150.6,
+    font: "bd", size: 39, pitch: 46.5, delay: 600,
     lines: [
       "22+ years. One India story.",
       "Connecting science, health and ",   // trailing space matches the design
-      "partnerships to create impact"
+      "partnerships to create impact."
     ]
   },
   {
-    id: "tagline", left: 85, top: 1740,
-    font: "bd", size: 34.7, pitch: 42.9, delay: 800,
+    id: "tap-hint", align: "right", right: 1000.5, top: 319.9,
+    font: "bd", size: 27, pitch: 40, delay: 750,
+    lines: ["TAP ON EACH ICON TO EXPLORE MORE."]
+  },
+  {
+    id: "tagline", left: 83.7, top: 1739.7,
+    font: "bd", size: 35, pitch: 42, delay: 800,
     lines: [
       { text: "Many Milestones. One India Story.", font: "bd" },
       { text: "Driven by Science. Across Every Life.", font: "bdit" }
     ]
   },
   {
-    id: "footnote", left: 85, top: 1854,
-    font: "md", size: 11.6, pitch: 15, delay: 1000,
+    id: "footnote", left: 83.7, top: 1852.6,
+    font: "reg", size: 12, pitch: 14.4, delay: 1000,
     lines: [
       "Clinical research data as of September 2026. Patient figure represents cumulative participation in",
       "Boehringer Ingelheim clinical research studies in India since inception. Further studies are ongoing."
