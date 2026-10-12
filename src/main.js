@@ -1201,7 +1201,12 @@ function buildTextMesh(lines, { align = "left", box = true, card = false } = {})
 
   if (showBox) drawTextBoxes(ctx, lines, PAD);
 
-  if (cardRect) drawCardShape(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h);
+  if (cardRect) {
+    drawCardShape(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h);
+    if (CARD_CLOSE_BUTTON) {
+      drawCloseButton(ctx, cardRect.x + cardRect.w - CARD_CLOSE_INSET, cardRect.y + CARD_CLOSE_INSET);
+    }
+  }
 
   lines.forEach((l) => {
     ctx.fillStyle = l.color || "#ffffff";
@@ -1239,6 +1244,10 @@ function buildTextMesh(lines, { align = "left", box = true, card = false } = {})
   mesh.renderOrder = 200;
   mesh.frustumCulled = false;
   mesh.userData = { blockW, blockH };
+  if (cardRect && CARD_CLOSE_BUTTON) {
+    mesh.userData.canvasPx = { w: blockW + PAD * 2, h: blockH + PAD * 2 };
+    mesh.userData.closePx = { x: cardRect.x + cardRect.w - CARD_CLOSE_INSET, y: cardRect.y + CARD_CLOSE_INSET };
+  }
 
   return mesh;
 }
@@ -1248,6 +1257,33 @@ function placeTextBlock(mesh, left, top, z = 0.02) {
   const { blockW, blockH } = mesh.userData;
   const pos = frameToAnchor(left + blockW / 2, top + blockH / 2, z);
   mesh.position.set(pos.x, pos.y, pos.z);
+}
+
+// ---- Close (X) button in the top-right corner of every card ----------------
+const CARD_CLOSE_BUTTON = true;
+const CARD_CLOSE_INSET = 30;       // centre of the X, from the card's top / right edge (page px)
+const CARD_CLOSE_RADIUS = 17;      // size of the round X button (page px)
+const CARD_CLOSE_HIT = 52;         // tap area around it -- bigger than it looks, easy to hit
+const CARD_CLOSE_BG = "#e3f3ec";
+const CARD_CLOSE_FG = "#004B41";
+
+// Draws the X on the canvas. cx / cy = its centre in canvas page px.
+function drawCloseButton(ctx, cx, cy) {
+  const k = TEXT_RES, r = CARD_CLOSE_RADIUS * k;
+  ctx.save();
+  ctx.fillStyle = CARD_CLOSE_BG;
+  ctx.beginPath();
+  ctx.arc(cx * k, cy * k, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = CARD_CLOSE_FG;
+  ctx.lineWidth = 3.2 * k;
+  ctx.lineCap = "round";
+  const d = r * 0.36;
+  ctx.beginPath();
+  ctx.moveTo(cx * k - d, cy * k - d); ctx.lineTo(cx * k + d, cy * k + d);
+  ctx.moveTo(cx * k + d, cy * k - d); ctx.lineTo(cx * k - d, cy * k + d);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // White rounded card with the PDF's soft shadow and thin dark edge.
@@ -1290,6 +1326,9 @@ function createLayoutCard(L) {
 
   drawCardShape(ctx, PAD, PAD, L.w, L.h);
 
+  const closePx = { x: PAD + L.w - CARD_CLOSE_INSET, y: PAD + CARD_CLOSE_INSET };
+  if (CARD_CLOSE_BUTTON) drawCloseButton(ctx, closePx.x, closePx.y);
+
   L.lines.forEach(([kind, text, x, base, dotX]) => {
     const head = kind === "h";
     const font = head ? "bd" : "md";
@@ -1321,7 +1360,12 @@ function createLayoutCard(L) {
   );
   mesh.renderOrder = 200;
   mesh.frustumCulled = false;
-  mesh.userData = { blockW: L.w, blockH: L.h, designCx: L.cx, designCy: L.cy };
+  mesh.userData = {
+    blockW: L.w, blockH: L.h, designCx: L.cx, designCy: L.cy,
+    // canvas size and X-button centre, in page px, for tap detection
+    canvasPx: { w: L.w + PAD * 2, h: L.h + PAD * 2 },
+    closePx: CARD_CLOSE_BUTTON ? closePx : null
+  };
   return mesh;
 }
 
@@ -1979,6 +2023,24 @@ function handleTap(clientX, clientY) {
   pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(pointer, camera);
+
+  // An open text card sits on top: tapping its X closes it; tapping anywhere
+  // else on the card does nothing (so icons hidden behind it are not triggered).
+  if (activeIcon && activeIcon.textMesh && activeIcon.textMesh.visible) {
+    const cardHit = raycaster.intersectObject(activeIcon.textMesh, false)[0];
+    if (cardHit && cardHit.uv) {
+      const ud = activeIcon.textMesh.userData;
+      if (ud.closePx && ud.canvasPx) {
+        const px = cardHit.uv.x * ud.canvasPx.w;
+        const py = (1 - cardHit.uv.y) * ud.canvasPx.h;
+        if (Math.hypot(px - ud.closePx.x, py - ud.closePx.y) <= CARD_CLOSE_HIT) {
+          toggleIcon(activeIcon);                    // close it
+          console.log("✖ text card closed");
+        }
+      }
+      return;
+    }
+  }
 
   const hits = raycaster.intersectObjects(allMeshes(), false);
 
