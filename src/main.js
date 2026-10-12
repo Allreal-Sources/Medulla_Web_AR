@@ -23,7 +23,7 @@ import {
 //   arLoader.done()                fade the screen out
 //   arLoader.error("text")         show a problem instead of spinning forever
 
-const LOADER_STEPS = 9;   // 8 GIFs + the fonts: each one moves the bar a little
+const LOADER_STEPS = 8;   // 7 GIFs (hen, dog, brain, organs, drop, doctor, earth) + the fonts
 
 const arLoader = (() => {
 
@@ -937,6 +937,10 @@ const CALLOUT_STYLE = "card";
 //   ["b", text, x, baseline, dotX]    first line of a bullet, with its dot
 //   ["c", text, x, baseline]          continuation line of a bullet
 // cx / cy = where the card's centre sits on the 1080 x 1920 page.
+//
+// NOTE: for any id listed here, the heading / bullets passed to
+// createTextPanel() further down are IGNORED -- the text comes from this table.
+// Edit the text HERE.
 const CARD_LAYOUTS = {
   brain: { w: 482.5, h: 401.9, cx: 454.1, cy: 1039.5,   // page centre of the card
     lines: [
@@ -972,26 +976,24 @@ const CARD_LAYOUTS = {
       ["b", "3 winning research collaborations", 53.8, 289.9, 31.8]
     ]
   },
-  doctor: { w: 482.5, h: 344.4, cx: 484.1, cy: 1039.5,   // page centre of the card
+  // Scientist icon: the original "Contributing to global clinical research" card,
+  // with a second section ("Bringing innovation to India") added at the bottom.
+  clinical: { w: 482.5, h: 498.4, cx: 484.1, cy: 1039.5,   // page centre of the card
     lines: [
       ["h", "Contributing to", 33.6, 60.7],
       ["h", "global clinical research", 33.6, 96.7],
       ["b", "13 active Phase II/III studies*", 54.4, 152.7, 33.6],
       ["b", "8 therapy areas*", 54.4, 204.7, 33.6],
       ["b", "2,500+ patients involved in clinical", 54.4, 254.7, 33.6],
-      ["c", "research since inception*", 54.4, 286.7]
+      ["c", "research since inception*", 54.4, 286.7],
+      // ---- added section ----
+      ["h", "Bringing", 33.6, 348.7],
+      ["h", "innovation to India", 33.6, 384.7],
+      ["b", "13+ innovative molecules introduced", 54.4, 440.7, 33.6]
     ]
   },
-  earth: { w: 482.5, h: 322.1, cx: 455.2, cy: 1039.5,   // page centre of the card
-    lines: [
-      ["h", "Bringing", 35.1, 61.6],
-      ["h", "innovation to India", 35.1, 97.6],
-      ["b", "13+ innovative molecules introduced", 55.5, 153.6, 35.1],
-      ["b", "400+ colleagues", 55.5, 203.6, 35.1],
-      ["b", "70+ locations", 55.5, 254.6, 35.1]
-    ]
-  },
-  crm: { w: 482.5, h: 507.1, cx: 457.8, cy: 1052.3,   // page centre of the card
+  // Globe icon: "Creating impact beyond healthcare"
+  impact: { w: 482.5, h: 507.1, cx: 457.8, cy: 1052.3,   // page centre of the card
     lines: [
       ["h", "Creating impact", 32.1, 57.2],
       ["h", "beyond healthcare", 32.1, 92.2],
@@ -1003,6 +1005,18 @@ const CARD_LAYOUTS = {
       ["c", "livelihood programmes", 53.8, 372.2],
       ["b", "Mobile health access expanded to", 53.8, 424.2, 32.1],
       ["c", "underserved communities", 53.8, 456.2]
+    ]
+  },
+  // CRM organs icon: "Seeing health as interconnected"
+  interconnected: { w: 482.5, h: 379.4, cx: 455.2, cy: 1039.5,   // page centre of the card
+    lines: [
+      ["h", "Seeing health as", 33.6, 60.9],
+      ["h", "interconnected", 33.6, 95.9],
+      ["b", "Earlier CRM risk identification", 54.4, 152.7, 33.6],
+      ["b", "Connecting cardiovascular,", 54.4, 204.7, 33.6],
+      ["c", "renal and metabolic health", 54.4, 236.7],
+      ["b", "Supporting more holistic", 54.4, 289.7, 33.6],
+      ["c", "approaches to care", 54.4, 321.7]
     ]
   }
 };
@@ -1450,9 +1464,8 @@ console.log("🎬 Loading icon GIFs + font (in parallel)...");
 
 const [
   , // font load result unused, just needed to finish before text panels draw
-  //cowSprite,
- // duckSprite,
   henSprite,
+  dogSprite,
   brainSprite,
   crmSprite,
   dropSprite,
@@ -1460,9 +1473,8 @@ const [
   earthSprite
 ] = await Promise.all([
   loadBoehringerFonts(),
-  //loadGif("/assets/Cow.gif", GIF_SPEED),
- // loadGif("/assets/Duck.gif", GIF_SPEED),
   loadGif("/assets/Hen.gif", GIF_SPEED),
+  loadGif("/assets/Dog.gif", GIF_SPEED),
   loadGif("/assets/Brain.gif", GIF_SPEED),
   loadGif("/assets/3_Organs.gif", GIF_SPEED),
   loadGif("/assets/Drop.gif", GIF_SPEED),
@@ -1476,6 +1488,9 @@ console.log("✅ All icon GIFs + font loaded");
 // Text content per icon (client copy). Each bullet is a list of lines,
 // broken exactly as in the design. "^" makes the next character a
 // raised superscript, e.g. "opnMe^®".
+//
+// Reminder: ids that exist in CARD_LAYOUTS take their text from that table;
+// the heading / bullets below are only used for ids with no layout.
 // --------------------------------------------------------------
 
 const animalsText = createTextPanel({
@@ -1498,15 +1513,14 @@ const brainText = createTextPanel({
   ]
 });
 
+// CRM organs icon
 const crmText = createTextPanel({
-  id: "crm",
-  heading: ["Creating impact beyond healthcare"],
+  id: "interconnected",
+  heading: ["Seeing health as", "interconnected"],
   bullets: [
-    ["40+ villages reached in Nandurbar"],
-    ["7,000+ health check-ups"],
-    ["150+ frontline workers trained in NCD", "early detection"],
-    ["350+ women supported through", "livelihood programmes"],
-    ["Mobile health access expanded to", "underserved communities"]
+    ["Earlier CRM risk identification"],
+    ["Connecting cardiovascular,", "renal and metabolic health"],
+    ["Supporting more holistic", "approaches to care"]
   ]
 });
 
@@ -1520,8 +1534,9 @@ const dropText = createTextPanel({
   ]
 });
 
+// Scientist icon: clinical research + "Bringing innovation to India" at the bottom
 const doctorText = createTextPanel({
-  id: "doctor",
+  id: "clinical",
   heading: ["Contributing to", "global clinical research"],
   bullets: [
     ["13 active Phase II/III studies*"],
@@ -1530,13 +1545,16 @@ const doctorText = createTextPanel({
   ]
 });
 
+// Globe icon
 const earthText = createTextPanel({
-  id: "earth",
-  heading: ["Bringing innovation to India"],
+  id: "impact",
+  heading: ["Creating impact", "beyond healthcare"],
   bullets: [
-    ["13+ innovative", "molecules introduced"],
-    ["400+ colleagues"],
-    ["70+ locations"]
+    ["40+ villages reached in Nandurbar"],
+    ["7,000+ health check-ups"],
+    ["150+ frontline workers trained in", "NCD early detection"],
+    ["350+ women supported through", "livelihood programmes"],
+    ["Mobile health access expanded to", "underserved communities"]
   ]
 });
 
@@ -1547,7 +1565,8 @@ const earthText = createTextPanel({
 });
 
 // Registration order = spawn order (animals first, earth last).
-const animalsIcon = registerIcon("animals", [henSprite], animalsText);
+// The animals icon is now the dog + hen pair; tapping either opens the same card.
+const animalsIcon = registerIcon("animals", [dogSprite, henSprite], animalsText);
 const brainIcon = registerIcon("brain", [brainSprite], brainText);
 const crmIcon = registerIcon("crm", [crmSprite], crmText);
 const dropIcon = registerIcon("drop", [dropSprite], dropText);
@@ -1558,17 +1577,16 @@ icons.forEach((icon) => stage.add(...icon.sprites.map((s) => s.mesh)));
 
 
 // ============================================================
-// ANIMAL CLUSTER POSITION (ground-aligned)
+// ANIMAL CLUSTER POSITION (dog + hen, ground-aligned)
 // ============================================================
 
-//const DUCK_FX = 0.495;
-//const COW_FX = 0.540;
-const HEN_FX = 0.575;
+const DOG_FX = 0.51;
+const HEN_FX = 0.65;
 const GROUND_FY = 0.450;
 
-//const COW_SCALE = 0.17;
-//const DUCK_SCALE = 0.095;
+const DOG_SCALE = 0.18;
 const HEN_SCALE = 0.15;
+const DOG_GROUND_DROP = 0.025;   // the dog GIF has empty space under its paws; raise/lower to taste
 
 function positionOnGround(sprite, fx, scale, groundFy) {
   const base = positionFromFraction(fx, groundFy);
@@ -1576,16 +1594,13 @@ function positionOnGround(sprite, fx, scale, groundFy) {
   return { x: base.x, y: base.y + worldHeight / 2, z: base.z };
 }
 
-//cowSprite.mesh.scale.set(COW_SCALE, COW_SCALE, 1);
-//duckSprite.mesh.scale.set(DUCK_SCALE, DUCK_SCALE, 1);
+dogSprite.mesh.scale.set(DOG_SCALE, DOG_SCALE, 1);
 henSprite.mesh.scale.set(HEN_SCALE, HEN_SCALE, 1);
 
-//const cowPos = positionOnGround(cowSprite, COW_FX, COW_SCALE, GROUND_FY);
-//const duckPos = positionOnGround(duckSprite, DUCK_FX, DUCK_SCALE, GROUND_FY);
+const dogPos = positionOnGround(dogSprite, DOG_FX, DOG_SCALE, GROUND_FY);
 const henPos = positionOnGround(henSprite, HEN_FX, HEN_SCALE, GROUND_FY);
 
-//cowSprite.mesh.position.set(cowPos.x, cowPos.y, cowPos.z);
-//duckSprite.mesh.position.set(duckPos.x, duckPos.y, duckPos.z);
+dogSprite.mesh.position.set(dogPos.x, dogPos.y - DOG_GROUND_DROP, dogPos.z);
 henSprite.mesh.position.set(henPos.x, henPos.y, henPos.z);
 
 
