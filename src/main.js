@@ -192,6 +192,10 @@ const {
   camera
 } = mindarThree;
 
+// Phones report a pixel ratio of 3+; capping it at 2 keeps the picture sharp but
+// cuts the pixels drawn each frame by more than half.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
 
 // ============================================================
 // TARGET
@@ -549,7 +553,7 @@ class GifSprite {
     this.canvas.width = width;
     this.canvas.height = height;
 
-    this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+    this.ctx = this.canvas.getContext("2d");
 
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
@@ -612,8 +616,9 @@ class GifSprite {
       restoreCtx.drawImage(this.canvas, 0, 0);
     }
 
-    const imageData = new ImageData(frame.patch, frame.dims.width, frame.dims.height);
-    this.ctx.putImageData(imageData, frame.dims.left, frame.dims.top);
+    // ImageData is built once per frame and reused on every loop
+    if (!frame._imageData) frame._imageData = new ImageData(frame.patch, frame.dims.width, frame.dims.height);
+    this.ctx.putImageData(frame._imageData, frame.dims.left, frame.dims.top);
 
     this.texture.needsUpdate = true;
     this.lastFrame = frame;
@@ -1662,7 +1667,7 @@ placeCallout(earthText, TEXT_SPOTS.earth);
 //   TEXT_CENTER_NUDGE_X / _Y fine-tune it, in brochure widths
 //   (+x right, +y up), e.g. 0.05 = 5% of the brochure width.
 // --------------------------------------------------------------
-const TEXT_AT_MAP_CENTER = true;
+const TEXT_AT_MAP_CENTER = false;   // false = each text opens beside its own icon (below)
 const TEXT_CENTER_MODE = "design";
 const TEXT_CENTER_NUDGE_X = 0;
 const TEXT_CENTER_NUDGE_Y = 0;
@@ -1723,6 +1728,56 @@ if (TEXT_AT_MAP_CENTER) {
     const dx = TEXT_KEEP_DESIGN_OFFSETS && ud.designCx !== undefined ? (ud.designCx - DESIGN_REF_X) / FRAME_W : 0;
     const dy = TEXT_KEEP_DESIGN_OFFSETS && ud.designCy !== undefined ? -(ud.designCy - DESIGN_REF_Y) / FRAME_W : 0;
     mesh.position.set(cx + dx, cy + dy, mesh.position.z);
+  });
+}
+
+// --------------------------------------------------------------
+// TEXT BESIDE ITS OWN ICON (used when TEXT_AT_MAP_CENTER = false).
+// Each card opens next to the icon that was tapped: on the side that has more
+// room (icons right of the page centre -> card on the left, and the other way
+// round), at the icon's height, kept inside the page.
+//   BESIDE_GAP     space between icon and card, in brochure widths
+//   BESIDE_NUDGE   per-icon fine tuning { dx, dy } (+x right, +y up) and
+//                  optional side: "left" | "right" to force a side
+// --------------------------------------------------------------
+const BESIDE_GAP = 0.02;
+const BESIDE_PAGE_MARGIN = 0.02;
+const BESIDE_NUDGE = {
+  animals: { dx: 0.53, dy: -0.35 },
+  brain:   { dx: 0.08, dy: 0.05 },
+  crm:     { dx: 0.05, dy: 0 },
+  drop:    { dx: 0.55, dy: -0.32 },
+  doctor:  { dx: 0.15, dy: -0.05 },
+  earth:   { dx: 0, dy: 0 }
+};
+
+if (!TEXT_AT_MAP_CENTER) {
+  const PAGE_HALF_H = (1920 / FRAME_W) / 2;
+  icons.forEach((icon) => {
+    const mesh = icon.textMesh || icon.text;
+    if (!mesh || !mesh.userData || !mesh.userData.canvasPx) return;
+    // bounding box of all the icon's sprites
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    icon.sprites.forEach((sp) => {
+      const hw = sp.mesh.scale.x * sp.geometry.parameters.width / 2;
+      const hh = sp.mesh.scale.y * sp.geometry.parameters.height / 2;
+      x0 = Math.min(x0, sp.mesh.position.x - hw); x1 = Math.max(x1, sp.mesh.position.x + hw);
+      y0 = Math.min(y0, sp.mesh.position.y - hh); y1 = Math.max(y1, sp.mesh.position.y + hh);
+    });
+    const icx = (x0 + x1) / 2, icy = (y0 + y1) / 2;
+    const cardHW = mesh.userData.canvasPx.w / FRAME_W / 2;
+    const cardHH = mesh.userData.canvasPx.h / FRAME_W / 2;
+    const nudge = BESIDE_NUDGE[icon.id] || {};
+    const side = nudge.side || (icx > 0 ? "left" : "right");
+    let x = side === "left" ? x0 - BESIDE_GAP - cardHW : x1 + BESIDE_GAP + cardHW;
+    let y = icy;
+    const maxX = 0.5 - BESIDE_PAGE_MARGIN - cardHW;
+    const maxY = PAGE_HALF_H - BESIDE_PAGE_MARGIN - cardHH;
+    x = Math.max(-maxX, Math.min(maxX, x));
+    y = Math.max(-maxY, Math.min(maxY, y));
+    // nudge is applied AFTER the page-edge clamp, so it always moves the card
+    x += nudge.dx || 0; y += nudge.dy || 0;
+    mesh.position.set(x, y, mesh.position.z);
   });
 }
 
@@ -2287,7 +2342,7 @@ let previousTime = performance.now();
 renderer.setAnimationLoop(() => {
 
   const now = performance.now();
-  const delta = now - previousTime;
+  const delta = Math.min(now - previousTime, 100);   // a long pause (tab switch) must not make animations jump
   previousTime = now;
 
   updateSmoothPose();   // must run before anything that reads the page pose

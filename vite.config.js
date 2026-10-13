@@ -4,7 +4,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     allowedHosts: [
-      "opera-framework-likewise-spare.trycloudflare.com"
+      "loads-ccd-acquisition-ceiling.trycloudflare.com"
     ]
   }
 });
